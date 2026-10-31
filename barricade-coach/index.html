@@ -1,0 +1,1379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>Barricade Coach</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Move advisor for 2-player Barricade (Quoridor rules): enter each move and it suggests your best reply.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800&display=swap">
+<style>
+/* Layout: phones get one column (advice, board, controls, log); from 820px the board sits left and the coach panel right. */
+:root {
+  --bg: #E4E7EA;
+  --surface: #F6F7F8;
+  --surface-2: #E9ECEF;
+  --raised: #FFFFFF;
+  --ink: #191D22;
+  --muted: #56606B;
+  --line: #C6CCD3;
+  --asphalt: #2A2F35;
+  --groove: #1C2024;
+  --cell: #3A4149;
+  --goal-you: #2F4B69;
+  --goal-them: #5A3641;
+  --label: #8E98A3;
+  --you: #4DA8FF;
+  --them: #FF5C7C;
+  --them-ink: #2B0B14;
+  --wall: #FF7A1A;
+  --stripe: #FFF1E2;
+  --shine: #FFFFFF;
+  --hint: #FFD43B;
+  --hint-ink: #1A1A12;
+  --ok: #2FBF71;
+  --bad: #E5484D;
+  --bad-text: #B42318;
+  --focus: #1F6FEB;
+  --f-display: "Big Shoulders Display", "Arial Narrow", "Helvetica Neue", Impact, sans-serif;
+  --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-label: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121519; --surface: #1B1F24; --surface-2: #15191D; --raised: #2C3239;
+    --ink: #E6E9EC; --muted: #9AA3AD; --line: #2E343B;
+    --asphalt: #22272C; --groove: #15181B; --cell: #343B42;
+    --goal-you: #2A4561; --goal-them: #52313B; --label: #7E8893;
+    --bad-text: #FF8A8A; --focus: #6CB4FF;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121519; --surface: #1B1F24; --surface-2: #15191D; --raised: #2C3239;
+  --ink: #E6E9EC; --muted: #9AA3AD; --line: #2E343B;
+  --asphalt: #22272C; --groove: #15181B; --cell: #343B42;
+  --goal-you: #2A4561; --goal-them: #52313B; --label: #7E8893;
+  --bad-text: #FF8A8A; --focus: #6CB4FF;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 15px/1.45 var(--f-body);
+  -webkit-text-size-adjust: 100%;
+}
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; }
+
+.app {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding-block: 14px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.badge {
+  flex: none; width: 30px; height: 30px; border-radius: 6px;
+  background: repeating-linear-gradient(135deg, var(--wall) 0 5px, var(--stripe) 5px 10px);
+  box-shadow: inset 0 0 0 2px var(--groove);
+}
+h1 {
+  margin: 0; font: 800 28px/1 var(--f-display); letter-spacing: .03em; text-transform: uppercase;
+}
+.sub { margin: 3px 0 0; color: var(--muted); font-size: 13.5px; text-wrap: balance; }
+.top-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 40px; padding: 9px 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  font: 600 15px/1 var(--f-body); cursor: pointer; white-space: nowrap;
+  transition: transform .08s ease, background-color .15s ease;
+}
+.btn:hover { background: var(--raised); }
+.btn:active { transform: translateY(1px); }
+.btn.ghost { background: transparent; }
+.btn.ghost:hover { background: var(--surface); }
+.btn.solid { background: var(--ink); color: var(--bg); border-color: transparent; }
+.btn.hint { background: var(--hint); color: var(--hint-ink); border-color: transparent; }
+.btn.small { min-height: 36px; padding: 7px 12px; font-size: 14px; }
+.btn:disabled { opacity: .45; cursor: default; transform: none; }
+.btn:focus-visible, .seg button:focus-visible, .stepper input:focus-visible, #board .dest:focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+#board .dest:focus-visible { outline-offset: 0; }
+
+.seg {
+  display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.seg button {
+  min-height: 34px; padding: 7px 13px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--muted); cursor: pointer;
+  font: 700 14px/1 var(--f-label); letter-spacing: .07em; text-transform: uppercase;
+}
+.seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .18); }
+
+/* Main layout */
+.layout { display: flex; flex-direction: column; gap: 12px; }
+.col-board, .col-side { display: contents; }
+#advice { order: 1; }
+#newPanel, #editPanel { order: 2; }
+.board-wrap { order: 3; }
+.controls { order: 4; }
+.msg { order: 5; }
+.log { order: 6; }
+
+.board-wrap {
+  align-self: center;
+  width: 100%;
+  max-width: min(620px, max(270px, calc(100vh - 130px)));
+  max-width: min(620px, max(270px, calc(100svh - 130px)));
+  border-radius: 14px;
+  box-shadow: 0 14px 30px -20px rgba(0, 0, 0, .55);
+}
+#board {
+  display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; max-width: 100%;
+  touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent; cursor: pointer;
+}
+
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.controls .spacer { flex: 1 1 auto; }
+.wall-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.msg { margin: 0; min-height: 1.45em; color: var(--muted); font-size: 14px; }
+.msg.bad { color: var(--bad-text); }
+
+/* Advice card */
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
+}
+.adv-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chip {
+  display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border-radius: 6px;
+  font: 700 13px/1 var(--f-label); letter-spacing: .09em; text-transform: uppercase;
+}
+.chip.you { background: var(--hint); color: var(--hint-ink); }
+.chip.them { background: var(--them); color: var(--them-ink); }
+.chip.over { background: var(--ink); color: var(--bg); }
+.turn-no { color: var(--muted); font: 600 13px/1 var(--f-label); letter-spacing: .08em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.headline { margin: 0; font: 800 clamp(28px, 7vw, 36px)/1.02 var(--f-display); letter-spacing: .01em; text-wrap: balance; }
+.detail { margin: 0; max-width: 62ch; }
+.detail b { font-weight: 600; }
+.think-bar {
+  display: block; height: 8px; max-width: 240px; border-radius: 4px;
+  background: repeating-linear-gradient(-45deg, var(--hint) 0 8px, var(--hint-ink) 8px 16px);
+  background-size: 22.63px 8px;
+  animation: tape .8s linear infinite;
+}
+@keyframes tape { to { background-position: 22.63px 0; } }
+
+.meter { position: relative; height: 10px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+.meter-mid { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 2px; margin-left: -1px; background: var(--muted); opacity: .55; }
+.meter-fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.meter-fill.you { background: var(--you); }
+.meter-fill.them { background: var(--them); }
+.meter-label { margin: -4px 0 0; font-size: 14px; color: var(--muted); }
+.meter-label b { color: var(--ink); font-weight: 600; }
+
+.adv-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.meta { margin: 0; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.foot { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.stat { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 8px; min-width: 0; }
+.stat .who { font: 700 14px/1.1 var(--f-label); letter-spacing: .07em; text-transform: uppercase; }
+.stat .nums { grid-column: 2; display: flex; flex-wrap: wrap; gap: 0 12px; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
+.stat .nums b { color: var(--ink); font-weight: 600; }
+.tok { display: inline-block; width: 12px; height: 12px; flex: none; }
+.tok.you { border-radius: 50%; background: var(--you); }
+.tok.them { border-radius: 3px; background: var(--them); }
+.tok.edit { border-radius: 2px; background: repeating-linear-gradient(135deg, var(--wall) 0 3px, var(--stripe) 3px 6px); }
+
+/* Panels */
+.panel h2, .log h2 { margin: 0; font: 800 20px/1.1 var(--f-display); letter-spacing: .03em; text-transform: uppercase; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field.row { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.flabel { font: 700 13px/1.1 var(--f-label); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.help { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 62ch; }
+.err { margin: 0; min-height: 1.2em; color: var(--bad-text); font-size: 14px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper .btn { min-width: 38px; padding: 6px 0; font-size: 18px; }
+.stepper input, .stepper output {
+  width: 54px; min-height: 36px; text-align: center; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--raised); color: var(--ink); font: 600 16px/34px var(--f-body); font-variant-numeric: tabular-nums;
+}
+.stepper input { appearance: textfield; -moz-appearance: textfield; }
+.stepper input::-webkit-inner-spin-button, .stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.panel hr { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100%; }
+
+/* Log */
+.log ol { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; max-height: 128px; overflow-y: auto; }
+.log li {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  font: 600 14px/1 var(--f-label); letter-spacing: .04em; font-variant-numeric: tabular-nums;
+}
+.log li .n { color: var(--muted); font-weight: 600; }
+.log .empty { color: var(--muted); font-size: 14px; margin: 0; }
+
+/* Board drawing */
+.slab { fill: var(--asphalt); }
+.grooves { fill: var(--groove); }
+.cell { fill: var(--cell); }
+.cell.gy { fill: var(--goal-you); }
+.cell.gt { fill: var(--goal-them); }
+.lbl { fill: var(--label); font: 700 3.6px var(--f-label); text-anchor: middle; dominant-baseline: central; letter-spacing: .02em; }
+.wall { fill: var(--wall); }
+.stripe { fill: var(--stripe); opacity: .9; }
+.last-you { fill: none; stroke: var(--you); stroke-width: .7; }
+.last-them { fill: none; stroke: var(--them); stroke-width: .7; }
+.hint-fill { fill: var(--hint); }
+.hint-stripe { fill: var(--hint-ink); opacity: .8; }
+.hint-wall { animation: pulse 1.3s ease-in-out infinite; }
+.hint-ring { fill: none; stroke: var(--hint); stroke-width: .9; stroke-dasharray: 2.2 1.4; animation: march 1s linear infinite; }
+.hint-disc { fill: var(--hint); opacity: .2; }
+.hint-line { stroke: var(--hint); stroke-width: .7; stroke-dasharray: 1.2 1.2; stroke-linecap: round; opacity: .85; }
+.pv.ok { fill: var(--ok); opacity: .92; }
+.pv.bad { fill: var(--bad); opacity: .92; }
+.pv-edge { fill: none; stroke: var(--stripe); stroke-width: .35; stroke-dasharray: 1 .8; }
+.pawn-you { fill: var(--you); }
+.pawn-them { fill: var(--them); }
+.pawn-edge { stroke: var(--groove); stroke-width: .7; }
+.shine { fill: var(--shine); opacity: .3; }
+.from-you, .from-them { fill: none; stroke-width: .5; stroke-dasharray: 1 1; opacity: .75; }
+.from-you { stroke: var(--you); }
+.from-them { stroke: var(--them); }
+.dest .hit { fill: transparent; }
+.dest .dot { opacity: .8; }
+.dest .dot.you { fill: var(--you); }
+.dest .dot.them { fill: var(--them); }
+.edit-ring { fill: none; stroke: var(--hint); stroke-width: .6; }
+@keyframes march { to { stroke-dashoffset: -3.6; } }
+@keyframes pulse { 50% { opacity: .6; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .hint-wall, .hint-ring, .think-bar { animation: none; }
+  .btn { transition: none; }
+}
+
+@media (min-width: 820px) {
+  .layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr); gap: 22px; align-items: start; }
+  .col-board, .col-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .col-board { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+  .board-wrap { max-width: min(620px, max(320px, calc(100vh - 150px))); max-width: min(620px, max(320px, calc(100svh - 150px))); }
+}
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="badge" aria-hidden="true"></span>
+      <div>
+        <h1>Barricade Coach</h1>
+        <p class="sub">Move advisor for 2-player Barricade. Your pawn starts at the bottom and races to the top row.</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="btnEdit" class="btn ghost small" type="button">Edit position</button>
+      <button id="btnNew" class="btn ghost small" type="button">New game</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div class="col-board">
+      <div class="board-wrap">
+        <svg id="board" viewBox="0 0 100 100" role="group" aria-label="Barricade board"></svg>
+      </div>
+      <div class="controls" id="controls">
+        <div class="seg" role="group" aria-label="What to enter on the board">
+          <button id="modePawn" type="button" aria-pressed="true">Pawn</button>
+          <button id="modeWall" type="button" aria-pressed="false">Wall</button>
+        </div>
+        <div class="wall-actions" id="wallActions" hidden>
+          <button id="btnRotate" class="btn small" type="button">Rotate</button>
+          <button id="btnPlace" class="btn small solid" type="button">Place wall</button>
+        </div>
+        <span class="spacer"></span>
+        <button id="btnUndo" class="btn small ghost" type="button">Undo</button>
+      </div>
+      <p id="msg" class="msg" aria-live="polite"></p>
+    </div>
+
+    <div class="col-side">
+      <section id="advice" class="card" aria-live="polite" aria-label="Coach"></section>
+
+      <section id="newPanel" class="card panel" hidden aria-labelledby="newTitle">
+        <h2 id="newTitle">Game setup</h2>
+        <div class="field">
+          <span class="flabel" id="lblSize">Board size</span>
+          <div class="seg" role="group" aria-labelledby="lblSize" id="segSize">
+            <button type="button" data-size="5">5 × 5</button>
+            <button type="button" data-size="7">7 × 7</button>
+            <button type="button" data-size="9">9 × 9</button>
+            <button type="button" data-size="11">11 × 11</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="flabel" for="inpWalls">Walls each</label>
+          <div class="stepper">
+            <button class="btn small" type="button" data-wstep="-1" aria-label="Fewer walls">−</button>
+            <input id="inpWalls" type="number" min="0" max="30" inputmode="numeric" value="10">
+            <button class="btn small" type="button" data-wstep="1" aria-label="More walls">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="flabel" id="lblFirst">Who moves first</span>
+          <div class="seg" role="group" aria-labelledby="lblFirst" id="segFirst">
+            <button type="button" data-first="0">You</button>
+            <button type="button" data-first="1">Them</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="btnStart" class="btn solid" type="button">Start new game</button>
+          <button id="btnCloseNew" class="btn ghost" type="button">Close</button>
+        </div>
+        <hr>
+        <div class="field">
+          <span class="flabel" id="lblThink">Thinking time</span>
+          <div class="seg" role="group" aria-labelledby="lblThink" id="segThink">
+            <button type="button" data-think="500">0.5 s</button>
+            <button type="button" data-think="1500">1.5 s</button>
+            <button type="button" data-think="4000">4 s</button>
+            <button type="button" data-think="8000">8 s</button>
+          </div>
+          <p class="help">Longer finds stronger moves. This applies right away, without starting a new game.</p>
+        </div>
+      </section>
+
+      <section id="editPanel" class="card panel" hidden aria-labelledby="editTitle">
+        <h2 id="editTitle">Edit position</h2>
+        <p class="help">Match the board to your game. Pick a piece, then tap the board. With Walls, tap a groove to add a wall or tap a wall to remove it. Walls-left counts don't change by themselves, so set them below.</p>
+        <div class="seg" role="group" aria-label="Piece to place" id="segTool">
+          <button type="button" data-tool="you">Your pawn</button>
+          <button type="button" data-tool="them">Their pawn</button>
+          <button type="button" data-tool="wall">Walls</button>
+        </div>
+        <div class="field row">
+          <span class="flabel">Your walls left</span>
+          <div class="stepper">
+            <button class="btn small" type="button" data-ew="0" data-d="-1" aria-label="Fewer walls for you">−</button>
+            <output id="outW0">10</output>
+            <button class="btn small" type="button" data-ew="0" data-d="1" aria-label="More walls for you">+</button>
+          </div>
+        </div>
+        <div class="field row">
+          <span class="flabel">Their walls left</span>
+          <div class="stepper">
+            <button class="btn small" type="button" data-ew="1" data-d="-1" aria-label="Fewer walls for them">−</button>
+            <output id="outW1">10</output>
+            <button class="btn small" type="button" data-ew="1" data-d="1" aria-label="More walls for them">+</button>
+          </div>
+        </div>
+        <div class="field row">
+          <span class="flabel" id="lblNext">Next to move</span>
+          <div class="seg" role="group" aria-labelledby="lblNext" id="segNext">
+            <button type="button" data-next="0">You</button>
+            <button type="button" data-next="1">Them</button>
+          </div>
+        </div>
+        <p id="editErr" class="err" aria-live="polite"></p>
+        <div class="actions">
+          <button id="btnEditDone" class="btn solid" type="button">Done</button>
+          <button id="btnEditCancel" class="btn ghost" type="button">Cancel</button>
+          <button id="btnClearWalls" class="btn ghost" type="button">Clear walls</button>
+        </div>
+      </section>
+
+      <section class="card log" aria-labelledby="logTitle">
+        <h2 id="logTitle">Moves</h2>
+        <div id="logBody"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+// ENGINE-START
+// Barricade / Quoridor engine. Self-contained so it can also run inside a Web Worker.
+// Board cells are r * N + c with row 0 at the top. Player 0 (you) starts on the bottom row and
+// wins on row 0; player 1 starts on the top row and wins on row N - 1.
+// A wall is k in [0, 2M): k < M is horizontal, k >= M is vertical, M = (N - 1)^2.
+// Wall index i = r * (N - 1) + c names the groove crossing between cells (r, c) and (r + 1, c + 1).
+function BarricadeEngine(opts) {
+  'use strict';
+  opts = opts || {};
+  const WIN = 100000, MATE = WIN - 1000;
+  const STEP = 12;                       // score for one step of path length
+  const TEMPO = 6;                       // the side to move is half a step ahead
+  const WALLV = opts.wallValue != null ? opts.wallValue : 14;  // a wall still in hand (tuned by self-play)
+  const RACE = 300;                      // bonus when the race can no longer be stopped
+  const CAP1 = opts.cap1 || 12, CAP2 = opts.cap2 || 8;          // walls tried below the root
+  const MAXC = 169, MAXW = 512, MAXPLY = 64;
+  const now = (typeof performance !== 'undefined' && performance.now)
+    ? () => performance.now() : () => Date.now();
+
+  const Q = new Int32Array(MAXC), seen = new Int32Array(MAXC), dd = new Int16Array(MAXC);
+  const dmP = new Int16Array(MAXC), dmO = new Int16Array(MAXC);
+  const marksP = new Uint8Array(MAXW), marksO = new Uint8Array(MAXW);
+  const PM = new Int32Array(8);
+  const MV = [], KY = [];
+  for (let i = 0; i < MAXPLY; i++) { MV.push(new Int32Array(MAXW)); KY.push(new Float64Array(MAXW)); }
+  let stamp = 0;
+
+  let seed = 0x2545F491;
+  function rnd() { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return seed >>> 0; }
+  function table(n) { const t = new Uint32Array(n); for (let i = 0; i < n; i++) t[i] = rnd(); return t; }
+  const ZP1 = table(2 * MAXC), ZP2 = table(2 * MAXC);
+  const ZW1 = table(MAXW), ZW2 = table(MAXW);
+  const ZC1 = table(128), ZC2 = table(128);
+  const ZT1 = rnd(), ZT2 = rnd();
+
+  function rawSet(B, k, on) {
+    const M = B.M, W = B.W, N = B.N, d = on ? 1 : -1;
+    if (k < M) {
+      const r = (k / W) | 0, c = k - r * W, a = r * N + c;
+      B.hW[k] = on; B.bD[a] += d; B.bD[a + 1] += d;
+    } else {
+      const i = k - M, r = (i / W) | 0, c = i - r * W, a = r * N + c;
+      B.vW[i] = on; B.bR[a] += d; B.bR[a + N] += d;
+    }
+  }
+
+  function hashOf(B) {
+    let h1 = 0, h2 = 0;
+    for (let p = 0; p < 2; p++) {
+      h1 ^= ZP1[p * MAXC + B.pos[p]]; h2 ^= ZP2[p * MAXC + B.pos[p]];
+      h1 ^= ZC1[p * 64 + B.walls[p]]; h2 ^= ZC2[p * 64 + B.walls[p]];
+    }
+    for (let i = 0; i < B.M; i++) {
+      if (B.hW[i]) { h1 ^= ZW1[i]; h2 ^= ZW2[i]; }
+      if (B.vW[i]) { h1 ^= ZW1[B.M + i]; h2 ^= ZW2[B.M + i]; }
+    }
+    if (B.turn) { h1 ^= ZT1; h2 ^= ZT2; }
+    B.h1 = h1; B.h2 = h2;
+  }
+
+  function build(st) {
+    const N = st.N, NN = N * N, W = N - 1, M = W * W;
+    const B = {
+      N, NN, W, M, off: [-N, 1, N, -1],
+      pos: Int32Array.from(st.pos), walls: Int32Array.from(st.walls).map(w => Math.max(0, Math.min(63, w))),
+      hW: new Uint8Array(M), vW: new Uint8Array(M), bD: new Uint8Array(NN), bR: new Uint8Array(NN),
+      turn: st.turn ? 1 : 0, h1: 0, h2: 0
+    };
+    for (let i = 0; i < M; i++) {
+      if (st.hW[i]) rawSet(B, i, 1);
+      if (st.vW[i]) rawSet(B, M + i, 1);
+    }
+    hashOf(B);
+    return B;
+  }
+
+  // d: 0 up, 1 right, 2 down, 3 left
+  function canStep(B, a, d) {
+    const N = B.N;
+    if (d === 0) return a >= N && B.bD[a - N] === 0;
+    if (d === 1) return (a % N) !== N - 1 && B.bR[a] === 0;
+    if (d === 2) return a < B.NN - N && B.bD[a] === 0;
+    return (a % N) !== 0 && B.bR[a - 1] === 0;
+  }
+
+  function wallFits(B, k) {
+    const M = B.M, W = B.W;
+    if (k < M) {
+      if (B.hW[k] || B.vW[k]) return false;
+      const c = k % W;
+      if (c > 0 && B.hW[k - 1]) return false;
+      if (c < W - 1 && B.hW[k + 1]) return false;
+      return true;
+    }
+    const i = k - M;
+    if (B.vW[i] || B.hW[i]) return false;
+    const r = (i / W) | 0;
+    if (r > 0 && B.vW[i - W]) return false;
+    if (r < W - 1 && B.vW[i + W]) return false;
+    return true;
+  }
+
+  function isGoal(B, p, cell) { return p === 0 ? cell < B.N : cell >= B.NN - B.N; }
+
+  // Shortest path length (ignoring pawns) from p's pawn to p's goal row, or -1.
+  function distFrom(B, p) {
+    const N = B.N, off = B.off, s0 = B.pos[p];
+    if (isGoal(B, p, s0)) return 0;
+    if (++stamp > 2000000000) { seen.fill(0); stamp = 1; }
+    let h = 0, t = 0;
+    seen[s0] = stamp; dd[s0] = 0; Q[t++] = s0;
+    while (h < t) {
+      const a = Q[h++], nd = dd[a] + 1;
+      for (let d = 0; d < 4; d++) {
+        if (!canStep(B, a, d)) continue;
+        const x = a + off[d];
+        if (seen[x] === stamp) continue;
+        if (isGoal(B, p, x)) return nd;
+        seen[x] = stamp; dd[x] = nd; Q[t++] = x;
+      }
+    }
+    return -1;
+  }
+
+  // Distance from every cell to p's goal row.
+  function bfsGoal(B, p, dm) {
+    const N = B.N, NN = B.NN, off = B.off;
+    dm.fill(-1, 0, NN);
+    let h = 0, t = 0;
+    const base = p === 0 ? 0 : NN - N;
+    for (let c = 0; c < N; c++) { dm[base + c] = 0; Q[t++] = base + c; }
+    while (h < t) {
+      const a = Q[h++], nd = dm[a] + 1;
+      for (let d = 0; d < 4; d++) {
+        if (!canStep(B, a, d)) continue;
+        const x = a + off[d];
+        if (dm[x] < 0) { dm[x] = nd; Q[t++] = x; }
+      }
+    }
+  }
+
+  // Mark every wall that would cut one edge of p's current shortest path.
+  // A wall that is not marked cannot change p's distance.
+  function pathMarks(B, p, dm, marks) {
+    const N = B.N, W = B.W, M = B.M, off = B.off;
+    marks.fill(0, 0, 2 * M);
+    let a = B.pos[p];
+    if (dm[a] < 0) return;
+    while (dm[a] > 0) {
+      const want = dm[a] - 1;
+      let nxt = -1, dir = -1;
+      for (let d = 0; d < 4; d++) {
+        if (!canStep(B, a, d)) continue;
+        const x = a + off[d];
+        if (dm[x] === want) { nxt = x; dir = d; break; }
+      }
+      if (nxt < 0) break;
+      if (dir === 0 || dir === 2) {
+        const top = dir === 0 ? nxt : a, r = (top / N) | 0, c = top - r * N;
+        if (c < W) marks[r * W + c] = 1;
+        if (c > 0) marks[r * W + c - 1] = 1;
+      } else {
+        const left = dir === 3 ? nxt : a, r = (left / N) | 0, c = left - r * N;
+        if (r < W) marks[M + r * W + c] = 1;
+        if (r > 0) marks[M + (r - 1) * W + c] = 1;
+      }
+      a = nxt;
+    }
+  }
+
+  function pawnMoves(B, p, out) {
+    const a = B.pos[p], b = B.pos[1 - p], off = B.off;
+    let n = 0;
+    for (let d = 0; d < 4; d++) {
+      if (!canStep(B, a, d)) continue;
+      const t = a + off[d];
+      if (t !== b) { out[n++] = t; continue; }
+      if (canStep(B, b, d)) { out[n++] = b + off[d]; continue; }
+      const d1 = (d + 1) & 3, d2 = (d + 3) & 3;
+      if (canStep(B, b, d1)) out[n++] = b + off[d1];
+      if (canStep(B, b, d2)) out[n++] = b + off[d2];
+    }
+    return n;
+  }
+
+  function apply(B, m) {
+    const p = B.turn;
+    let prev = -1;
+    if (m < B.NN) {
+      prev = B.pos[p];
+      B.h1 ^= ZP1[p * MAXC + prev] ^ ZP1[p * MAXC + m];
+      B.h2 ^= ZP2[p * MAXC + prev] ^ ZP2[p * MAXC + m];
+      B.pos[p] = m;
+    } else {
+      const k = m - B.NN, w = B.walls[p];
+      rawSet(B, k, 1);
+      B.h1 ^= ZW1[k] ^ ZC1[p * 64 + w] ^ ZC1[p * 64 + w - 1];
+      B.h2 ^= ZW2[k] ^ ZC2[p * 64 + w] ^ ZC2[p * 64 + w - 1];
+      B.walls[p] = w - 1;
+    }
+    B.turn = 1 - p; B.h1 ^= ZT1; B.h2 ^= ZT2;
+    return prev;
+  }
+
+  function undo(B, m, prev) {
+    B.turn = 1 - B.turn; B.h1 ^= ZT1; B.h2 ^= ZT2;
+    const p = B.turn;
+    if (m < B.NN) {
+      B.h1 ^= ZP1[p * MAXC + m] ^ ZP1[p * MAXC + prev];
+      B.h2 ^= ZP2[p * MAXC + m] ^ ZP2[p * MAXC + prev];
+      B.pos[p] = prev;
+    } else {
+      const k = m - B.NN, w = B.walls[p];
+      rawSet(B, k, 0);
+      B.h1 ^= ZW1[k] ^ ZC1[p * 64 + w] ^ ZC1[p * 64 + w + 1];
+      B.h2 ^= ZW2[k] ^ ZC2[p * 64 + w] ^ ZC2[p * 64 + w + 1];
+      B.walls[p] = w + 1;
+    }
+  }
+
+  function evaluate(B, p, myD, opD) {
+    const o = 1 - p;
+    let e = STEP * (opD - myD) + TEMPO + WALLV * (B.walls[p] - B.walls[o]);
+    if (B.walls[o] === 0 && myD <= opD) e += RACE;
+    else if (B.walls[p] === 0 && opD < myD) e -= RACE;
+    return e;
+  }
+
+  // Fills MV[ply] / KY[ply] with ordered moves. Needs dmP, dmO, marksP, marksO for this node.
+  function gen(B, ply, myD, opD, allWalls, ttMove) {
+    const p = B.turn, o = 1 - p, NN = B.NN, M2 = 2 * B.M;
+    const mv = MV[ply], ky = KY[ply];
+    let n = 0;
+    const pc = pawnMoves(B, p, PM);
+    for (let i = 0; i < pc; i++) { const t = PM[i]; mv[n] = t; ky[n] = STEP * (myD - dmP[t]); n++; }
+    if (B.walls[p] > 0) {
+      for (let k = 0; k < M2; k++) {
+        const onO = marksO[k] === 1;
+        if (!allWalls && !onO) continue;
+        if (!wallFits(B, k)) continue;
+        rawSet(B, k, 1);
+        let nO = opD, nM = myD;
+        if (onO) nO = distFrom(B, o);
+        if (nO >= 0 && marksP[k] === 1) nM = distFrom(B, p);
+        rawSet(B, k, 0);
+        if (nO < 0 || nM < 0) continue;
+        const gain = (nO - opD) - (nM - myD);
+        if (!allWalls && gain <= 0) continue;
+        mv[n] = NN + k; ky[n] = STEP * gain - WALLV; n++;
+      }
+    }
+    if (ttMove >= 0) for (let i = 0; i < n; i++) if (mv[i] === ttMove) { ky[i] = 1e9; break; }
+    for (let i = 1; i < n; i++) {
+      const m = mv[i], k = ky[i];
+      let j = i - 1;
+      while (j >= 0 && ky[j] < k) { mv[j + 1] = mv[j]; ky[j + 1] = ky[j]; j--; }
+      mv[j + 1] = m; ky[j + 1] = k;
+    }
+    return n;
+  }
+
+  const ABORT = { abort: true };
+  let nodes = 0, deadline = 0, noAbort = false, TT = new Map();
+
+  function negamax(B, depth, alpha, beta, ply) {
+    if ((++nodes & 511) === 0 && !noAbort && now() > deadline) throw ABORT;
+    const p = B.turn, o = 1 - p;
+    if (isGoal(B, o, B.pos[o])) return -(WIN - ply);
+
+    if (depth <= 0 || ply >= MAXPLY - 1) {
+      const myD = distFrom(B, p), opD = distFrom(B, o);
+      if (myD === 1) {
+        const pc = pawnMoves(B, p, PM);
+        for (let i = 0; i < pc; i++) if (isGoal(B, p, PM[i])) return WIN - (ply + 1);
+      }
+      return evaluate(B, p, myD, opD);
+    }
+
+    const pc = pawnMoves(B, p, PM);
+    for (let i = 0; i < pc; i++) if (isGoal(B, p, PM[i])) return WIN - (ply + 1);
+
+    const key = (B.h1 >>> 0) * 2097152 + (B.h2 & 0x1FFFFF);
+    const ent = TT.get(key);
+    let ttMove = -1;
+    if (ent !== undefined) {
+      ttMove = ent.m;
+      if (ent.d >= depth) {
+        let v = ent.v;
+        if (v > MATE) v -= ply; else if (v < -MATE) v += ply;
+        if (ent.f === 0 || (ent.f === 1 && v >= beta) || (ent.f === 2 && v <= alpha)) return v;
+      }
+    }
+
+    bfsGoal(B, p, dmP); bfsGoal(B, o, dmO);
+    const myD = dmP[B.pos[p]], opD = dmO[B.pos[o]];
+    pathMarks(B, p, dmP, marksP); pathMarks(B, o, dmO, marksO);
+    const n = gen(B, ply, myD, opD, false, ttMove);
+    if (n === 0) return evaluate(B, p, myD, opD);
+
+    const mv = MV[ply], cap = ply === 1 ? CAP1 : CAP2;
+    let best = -Infinity, bestM = mv[0], wc = 0;
+    const a0 = alpha;
+    for (let i = 0; i < n; i++) {
+      const m = mv[i];
+      if (m >= B.NN && ++wc > cap) continue;
+      const prev = apply(B, m);
+      const v = -negamax(B, depth - 1, -beta, -alpha, ply + 1);
+      undo(B, m, prev);
+      if (v > best) {
+        best = v; bestM = m;
+        if (v > alpha) { alpha = v; if (v >= beta) break; }
+      }
+    }
+    let sv = best;
+    if (sv > MATE) sv += ply; else if (sv < -MATE) sv -= ply;
+    if (TT.size > 300000) TT.clear();
+    TT.set(key, { d: depth, v: sv, f: best <= a0 ? 2 : (best >= beta ? 1 : 0), m: bestM });
+    return best;
+  }
+
+  function search(st, timeMs, maxDepth) {
+    const t0 = now();
+    deadline = t0 + Math.max(50, timeMs || 1000);
+    maxDepth = maxDepth || 40;
+    nodes = 0; TT = new Map();
+    const B = build(st), p = B.turn, o = 1 - p;
+    const done = (move, score, depth) => ({ move, score, depth, nodes, ms: Math.round(now() - t0) });
+    if (isGoal(B, 0, B.pos[0]) || isGoal(B, 1, B.pos[1])) return done(-1, 0, 0);
+
+    const pc = pawnMoves(B, p, PM);
+    for (let i = 0; i < pc; i++) if (isGoal(B, p, PM[i])) return done(PM[i], WIN - 1, 1);
+
+    bfsGoal(B, p, dmP); bfsGoal(B, o, dmO);
+    const myD = dmP[B.pos[p]], opD = dmO[B.pos[o]];
+    pathMarks(B, p, dmP, marksP); pathMarks(B, o, dmO, marksO);
+    const n = gen(B, 0, myD, opD, true, -1);
+    if (n === 0) return done(-1, 0, 0);
+    let moves = Array.from(MV[0].subarray(0, n));
+    let scores = new Array(n).fill(-Infinity);
+    let bestMove = moves[0], bestScore = 0, depthDone = 0;
+
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      noAbort = depth === 1;
+      let alpha = -Infinity, iterBest = -1, iterScore = -Infinity, completed = 0, aborted = false;
+      try {
+        for (let i = 0; i < moves.length; i++) {
+          const m = moves[i], prev = apply(B, m);
+          const v = -negamax(B, depth - 1, -Infinity, -alpha, 1);
+          undo(B, m, prev);
+          scores[i] = v; completed++;
+          if (v > iterScore) { iterScore = v; iterBest = i; if (v > alpha) alpha = v; }
+        }
+      } catch (e) {
+        if (e !== ABORT) throw e;
+        aborted = true;
+      }
+      noAbort = false;
+      if (aborted) {
+        // The first move is the previous best, so anything that beat it at this depth is better informed.
+        if (completed > 0 && iterBest >= 0) { bestMove = moves[iterBest]; bestScore = iterScore; }
+        break;
+      }
+      depthDone = depth; bestMove = moves[iterBest]; bestScore = iterScore;
+      const order = moves.map((_, i) => i).sort((a, b) => (scores[b] - scores[a]) || (a - b));
+      moves = order.map(i => moves[i]); scores = order.map(i => scores[i]);
+      if (Math.abs(bestScore) > MATE) break;
+      if (now() - t0 > (timeMs || 1000) * 0.45) break;   // the next depth would not finish in time
+    }
+    return done(bestMove, bestScore, depthDone);
+  }
+
+  // ---- helpers for the page ----
+  function legalPawnMoves(st) { const B = build(st); const n = pawnMoves(B, B.turn, PM); return Array.from(PM.subarray(0, n)); }
+  function wallStatus(st, k) {
+    const B = build(st);
+    if (k < 0 || k >= 2 * B.M) return 'outside';
+    if (B.walls[B.turn] <= 0) return 'none-left';
+    if (!wallFits(B, k)) return 'overlap';
+    rawSet(B, k, 1);
+    return (distFrom(B, 0) >= 0 && distFrom(B, 1) >= 0) ? 'ok' : 'blocks';
+  }
+  function wallFitsOnly(st, k) { return wallFits(build(st), k); }
+  function distances(st) { const B = build(st); return [distFrom(B, 0), distFrom(B, 1)]; }
+  function winner(st) { const B = build(st); return isGoal(B, 0, B.pos[0]) ? 0 : isGoal(B, 1, B.pos[1]) ? 1 : -1; }
+  function play(st, m) {
+    const s = Object.assign({}, st, { pos: st.pos.slice(), walls: st.walls.slice(), hW: st.hW.slice(), vW: st.vW.slice() });
+    const NN = st.N * st.N, M = (st.N - 1) * (st.N - 1), p = st.turn;
+    if (m < NN) s.pos[p] = m;
+    else { const k = m - NN; if (k < M) s.hW[k] = 1; else s.vW[k - M] = 1; s.walls[p] -= 1; }
+    s.turn = 1 - p;
+    return s;
+  }
+
+  return { search, legalPawnMoves, wallStatus, wallFitsOnly, distances, winner, play, WIN, MATE, STEP };
+}
+// ENGINE-END
+
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const E = BarricadeEngine();
+  const FILES = 'abcdefghijklmnopqrstuvwxyz';
+  const SIZES = [5, 7, 9, 11];
+  const STORE = 'barricade-coach-v1';
+  const CELL = 10, GAP = 2.6, PITCH = CELL + GAP, PAD = 6.6;
+
+  let game, history = [], prefs = { think: 1500 }, setup = { N: 9, walls: 10, first: 0 };
+  let mode = 'pawn', preview = -1, editing = null, msgText = '', msgBad = false;
+  const cache = new Map();
+  let worker = null, useWorker = typeof Worker !== 'undefined', busy = false, reqId = 0, pending = null;
+
+  // ---------- state helpers ----------
+  const defaultWalls = (N) => Math.round(10 * (N - 1) / 8);
+  const NNof = (g) => g.N * g.N;
+  const Mof = (g) => (g.N - 1) * (g.N - 1);
+  function newGame(N, walls, first) {
+    const M = (N - 1) * (N - 1);
+    return {
+      N, wallsInit: walls, pos: [(N - 1) * N + (N >> 1), N >> 1], walls: [walls, walls],
+      hW: new Array(M).fill(0), vW: new Array(M).fill(0), turn: first, log: [], last: -1, lastFrom: -1, lastBy: -1
+    };
+  }
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const keyOf = (g) => [g.N, g.pos.join(','), g.walls.join(','), g.turn, g.hW.join(''), g.vW.join('')].join('|');
+  const engineState = (g) => ({ N: g.N, pos: g.pos.slice(), walls: g.walls.slice(), hW: g.hW.slice(), vW: g.vW.slice(), turn: g.turn });
+  function validGame(g) {
+    try {
+      if (!g || !SIZES.includes(g.N)) return false;
+      const M = (g.N - 1) * (g.N - 1), NN = g.N * g.N;
+      const okPos = Array.isArray(g.pos) && g.pos.length === 2 && g.pos.every(x => Number.isInteger(x) && x >= 0 && x < NN) && g.pos[0] !== g.pos[1];
+      const okW = Array.isArray(g.walls) && g.walls.length === 2 && g.walls.every(w => Number.isInteger(w) && w >= 0 && w <= 30);
+      const okA = Array.isArray(g.hW) && g.hW.length === M && Array.isArray(g.vW) && g.vW.length === M;
+      return okPos && okW && okA && (g.turn === 0 || g.turn === 1) && Array.isArray(g.log);
+    } catch (e) { return false; }
+  }
+
+  // ---------- naming ----------
+  const sqName = (N, cell) => FILES[cell % N] + (N - Math.floor(cell / N));
+  function wallParts(N, k) {
+    const W = N - 1, M = W * W, v = k >= M, i = v ? k - M : k;
+    return { v, r: Math.floor(i / W), c: i % W };
+  }
+  function wallName(N, k) { const { v, r, c } = wallParts(N, k); return FILES[c] + (N - r - 1) + (v ? 'v' : 'h'); }
+  function wallWhere(N, k) {
+    const { v, r, c } = wallParts(N, k), lo = N - r - 1;
+    return v
+      ? `along the right side of ${FILES[c]}${lo + 1} and ${FILES[c]}${lo}`
+      : `along the top of ${FILES[c]}${lo} and ${FILES[c + 1]}${lo}`;
+  }
+  function pawnHeadline(N, from, to) {
+    const dr = Math.floor(to / N) - Math.floor(from / N), dc = (to % N) - (from % N), name = sqName(N, to);
+    if (Math.abs(dr) + Math.abs(dc) === 1) return `Step ${dr < 0 ? 'up' : dr > 0 ? 'down' : dc > 0 ? 'right' : 'left'} to ${name}`;
+    if (dr === 0 || dc === 0) return `Jump over their pawn to ${name}`;
+    return `Step diagonally to ${name}`;
+  }
+  const moveText = (g, m) => m < NNof(g) ? sqName(g.N, m) : wallName(g.N, m - NNof(g));
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+  // ---------- geometry ----------
+  const bsize = (N) => GAP + N * PITCH;
+  function cellXY(N, cell) { return [GAP + (cell % N) * PITCH, GAP + Math.floor(cell / N) * PITCH]; }
+  function wallRect(N, k) {
+    const { v, r, c } = wallParts(N, k);
+    return v
+      ? { x: (c + 1) * PITCH, y: GAP + r * PITCH, w: GAP, h: 2 * PITCH - GAP, v }
+      : { x: GAP + c * PITCH, y: (r + 1) * PITCH, w: 2 * PITCH - GAP, h: GAP, v };
+  }
+  function svgPoint(ev) {
+    const svg = $('#board'), r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+    return { x: vb.x + (ev.clientX - r.left) / r.width * vb.width, y: vb.y + (ev.clientY - r.top) / r.height * vb.height };
+  }
+  function hitCell(N, x, y) {
+    const S = bsize(N);
+    if (x < 0 || y < 0 || x > S || y > S) return -1;
+    const c = Math.min(N - 1, Math.max(0, Math.floor((x - GAP / 2) / PITCH)));
+    const r = Math.min(N - 1, Math.max(0, Math.floor((y - GAP / 2) / PITCH)));
+    return r * N + c;
+  }
+  function hitWall(N, x, y) {
+    const S = bsize(N), W = N - 1;
+    if (x < -2 || y < -2 || x > S + 2 || y > S + 2) return -1;
+    const fx = (x - GAP / 2) / PITCH, fy = (y - GAP / 2) / PITCH;
+    const c = Math.min(W - 1, Math.max(0, Math.round(fx) - 1));
+    const r = Math.min(W - 1, Math.max(0, Math.round(fy) - 1));
+    const dx = Math.abs(fx - Math.round(fx)), dy = Math.abs(fy - Math.round(fy));
+    return (dy <= dx ? 0 : W * W) + r * W + c;
+  }
+  function wallAt(g, k) { const M = Mof(g); return k < M ? g.hW[k] : g.vW[k - M]; }
+  function setWallArr(g, k, on) { const M = Mof(g); if (k < M) g.hW[k] = on; else g.vW[k - M] = on; }
+  function wallAtPoint(g, x, y) {
+    const M = Mof(g), e = 1.2;
+    for (let k = 0; k < 2 * M; k++) {
+      if (!wallAt(g, k)) continue;
+      const R = wallRect(g.N, k);
+      if (x >= R.x - e && x <= R.x + R.w + e && y >= R.y - e && y <= R.y + R.h + e) return k;
+    }
+    return -1;
+  }
+
+  // ---------- engine requests ----------
+  function makeWorker() {
+    try {
+      const src = BarricadeEngine.toString() +
+        '\nconst E = BarricadeEngine();\nself.onmessage = function (e) { const d = e.data; const r = E.search(d.state, d.ms); self.postMessage(Object.assign({ id: d.id }, r)); };';
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      const w = new Worker(url);
+      w.onmessage = (e) => onResult(e.data);
+      w.onerror = (ev) => {
+        if (ev && ev.preventDefault) ev.preventDefault();
+        useWorker = false; busy = false;
+        try { w.terminate(); } catch (e) { /* already gone */ }
+        worker = null;
+        if (pending) runLocal(pending);
+      };
+      return w;
+    } catch (e) { useWorker = false; return null; }
+  }
+  function runLocal(req) {
+    setTimeout(() => {
+      if (!pending || pending.id !== req.id) return;
+      const r = E.search(req.state, req.ms);
+      onResult(Object.assign({ id: req.id }, r));
+    }, 40);
+  }
+  function requestSearch(key, ms) {
+    const id = ++reqId;
+    pending = { id, key, ms, state: engineState(game) };
+    if (useWorker) {
+      if (worker && busy) { worker.terminate(); worker = null; busy = false; }
+      if (!worker) worker = makeWorker();
+      if (worker) { busy = true; worker.postMessage({ id, state: pending.state, ms }); return; }
+    }
+    runLocal(pending);
+  }
+  function cancelSearch() {
+    if (!pending) return;
+    pending = null; reqId++;
+    if (worker && busy) { worker.terminate(); worker = null; busy = false; }
+  }
+  function onResult(d) {
+    busy = false;
+    if (!pending || d.id !== pending.id) return;
+    cache.set(pending.key, d);
+    if (cache.size > 80) cache.delete(cache.keys().next().value);
+    pending = null;
+    renderAdvice(); renderBoard();
+  }
+  function maybeThink(force, ms) {
+    if (editing || E.winner(game) >= 0 || game.turn !== 0) { cancelSearch(); return; }
+    const key = keyOf(game);
+    if (!force && cache.has(key)) return;
+    if (!force && pending && pending.key === key) return;
+    if (force) cache.delete(key);
+    requestSearch(key, ms || prefs.think);
+  }
+  const currentSugg = () => (!editing && game.turn === 0 && E.winner(game) < 0) ? cache.get(keyOf(game)) || null : null;
+
+  // ---------- actions ----------
+  function setMsg(t, bad) { msgText = t || ''; msgBad = !!bad; const el = $('#msg'); el.textContent = msgText; el.classList.toggle('bad', msgBad); }
+  function save() {
+    try { localStorage.setItem(STORE, JSON.stringify({ game, history: history.slice(-150), prefs, setup })); } catch (e) { /* storage unavailable */ }
+  }
+  function doMove(m) {
+    const st = game, p = st.turn, NN = NNof(st);
+    history.push(clone(game));
+    if (history.length > 300) history.shift();
+    const next = E.play(st, m);
+    next.log = st.log.concat([{ p, t: moveText(st, m) }]);
+    next.last = m; next.lastBy = p; next.lastFrom = m < NN ? st.pos[p] : -1;
+    game = next;
+    preview = -1; mode = 'pawn';
+    const w = E.winner(game);
+    setMsg(w === 0 ? 'You reached the top row.' : w === 1 ? 'Their pawn reached your side.' : '');
+    save(); renderAll(); maybeThink();
+  }
+  function undoMove() {
+    if (!history.length) return;
+    game = history.pop();
+    preview = -1; mode = 'pawn';
+    setMsg('Undid the last move.');
+    save(); renderAll(); maybeThink();
+  }
+  function placePreview() {
+    if (preview < 0) return;
+    const s = E.wallStatus(game, preview);
+    if (s === 'ok') doMove(NNof(game) + preview);
+    else describePreview();
+  }
+  function describePreview() {
+    if (preview < 0) return;
+    const N = game.N, s = E.wallStatus(game, preview), who = game.turn === 0 ? 'You have' : 'They have';
+    const name = `${wallParts(N, preview).v ? 'Vertical' : 'Horizontal'} wall ${wallWhere(N, preview)}`;
+    if (s === 'ok') setMsg(`${name}. Tap it again or press Place wall.`);
+    else if (s === 'overlap') setMsg('That spot overlaps or crosses a wall that is already on the board.', true);
+    else if (s === 'blocks') setMsg('Not allowed: that wall would cut a pawn off from its goal row.', true);
+    else if (s === 'none-left') setMsg(`${who} no walls left.`, true);
+  }
+
+  // ---------- rendering ----------
+  function wallSVG(N, k, kind) {
+    const R = wallRect(N, k), t = 0.35;
+    const x = R.v ? R.x - t : R.x, y = R.v ? R.y : R.y - t, w = R.v ? R.w + 2 * t : R.w, h = R.v ? R.h : R.h + 2 * t;
+    const box = `x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" rx=".7"`;
+    if (kind === 'hint') return `<g class="hint-wall"><rect class="hint-fill" ${box}/><rect ${box} fill="url(#bc-caution)"/></g>`;
+    if (kind === 'ok' || kind === 'bad') return `<rect class="pv ${kind}" ${box}/><rect class="pv-edge" ${box}/>`;
+    let s = `<rect class="wall" ${box}/><rect ${box} fill="url(#bc-stripes)"/>`;
+    if (kind === 'last0' || kind === 'last1') s += `<rect class="${kind === 'last0' ? 'last-you' : 'last-them'}" ${box}/>`;
+    return s;
+  }
+  function pawnSVG(N, cell, p) {
+    const [x, y] = cellXY(N, cell), cx = x + CELL / 2, cy = y + CELL / 2;
+    const shine = `<circle class="shine" cx="${(cx - 1.1).toFixed(2)}" cy="${(cy - 1.2).toFixed(2)}" r="1.15"/>`;
+    return p === 0
+      ? `<circle class="pawn-you pawn-edge" cx="${cx}" cy="${cy}" r="3.6"/>${shine}`
+      : `<rect class="pawn-them pawn-edge" x="${(cx - 3.2).toFixed(2)}" y="${(cy - 3.2).toFixed(2)}" width="6.4" height="6.4" rx="1.4"/>${shine}`;
+  }
+  function renderBoard() {
+    const g = editing ? editing.draft : game, N = g.N, S = bsize(N), NN = NNof(g), M = Mof(g);
+    const svg = $('#board');
+    svg.setAttribute('viewBox', `${-PAD} ${-PAD} ${S + 2 * PAD} ${S + 2 * PAD}`);
+    let s = `<defs>
+      <pattern id="bc-stripes" width="2.6" height="2.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="stripe" width="1.05" height="2.6"/></pattern>
+      <pattern id="bc-caution" width="2.6" height="2.6" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect class="hint-stripe" width="1.05" height="2.6"/></pattern>
+    </defs>`;
+    s += `<rect class="slab" x="${-PAD}" y="${-PAD}" width="${S + 2 * PAD}" height="${S + 2 * PAD}" rx="4"/>`;
+    s += `<rect class="grooves" x="0" y="0" width="${S}" height="${S}" rx="1.4"/>`;
+    for (let cell = 0; cell < NN; cell++) {
+      const [x, y] = cellXY(N, cell), r = Math.floor(cell / N);
+      s += `<rect class="cell${r === 0 ? ' gy' : r === N - 1 ? ' gt' : ''}" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${CELL}" height="${CELL}" rx="1.2"/>`;
+    }
+    for (let c = 0; c < N; c++) s += `<text class="lbl" x="${(GAP + c * PITCH + CELL / 2).toFixed(2)}" y="${(S + PAD / 2).toFixed(2)}">${FILES[c]}</text>`;
+    for (let r = 0; r < N; r++) s += `<text class="lbl" x="${(-PAD / 2).toFixed(2)}" y="${(GAP + r * PITCH + CELL / 2).toFixed(2)}">${N - r}</text>`;
+
+    const sugg = currentSugg();
+    const lastWall = !editing && g.last >= NN ? g.last - NN : -1;
+
+    // where the last pawn came from
+    if (!editing && g.lastFrom >= 0) {
+      const [x, y] = cellXY(N, g.lastFrom);
+      s += `<circle class="${g.lastBy === 0 ? 'from-you' : 'from-them'}" cx="${x + CELL / 2}" cy="${y + CELL / 2}" r="3"/>`;
+    }
+    // legal destinations
+    let dests = [];
+    if (!editing && mode === 'pawn' && E.winner(g) < 0) dests = E.legalPawnMoves(g);
+    for (const t of dests) {
+      const [x, y] = cellXY(N, t), who = g.turn === 0 ? 'your' : 'their';
+      s += `<g class="dest" data-cell="${t}" tabindex="0" role="button" aria-label="Move ${who} pawn to ${sqName(N, t)}"><rect class="hit" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${CELL}" height="${CELL}" rx="1.2"/><circle class="dot ${g.turn === 0 ? 'you' : 'them'}" cx="${x + CELL / 2}" cy="${y + CELL / 2}" r="1.35"/></g>`;
+    }
+    // walls
+    for (let k = 0; k < 2 * M; k++) {
+      if (!wallAt(g, k)) continue;
+      s += wallSVG(N, k, k === lastWall ? 'last' + g.lastBy : 'placed');
+    }
+    // suggestion
+    if (sugg && sugg.move >= 0) {
+      if (sugg.move < NN) {
+        const [x, y] = cellXY(N, sugg.move), [px, py] = cellXY(N, g.pos[0]);
+        const cx = x + CELL / 2, cy = y + CELL / 2;
+        s += `<line class="hint-line" x1="${px + CELL / 2}" y1="${py + CELL / 2}" x2="${cx}" y2="${cy}"/>`;
+        s += `<circle class="hint-disc" cx="${cx}" cy="${cy}" r="4.3"/><circle class="hint-ring" cx="${cx}" cy="${cy}" r="4.3"/>`;
+      } else {
+        s += wallSVG(N, sugg.move - NN, 'hint');
+      }
+    }
+    // wall preview
+    if (!editing && mode === 'wall' && preview >= 0) s += wallSVG(N, preview, E.wallStatus(g, preview) === 'ok' ? 'ok' : 'bad');
+    // pawns
+    s += pawnSVG(N, g.pos[1], 1) + pawnSVG(N, g.pos[0], 0);
+    if (editing && editing.tool !== 'wall') {
+      const [x, y] = cellXY(N, g.pos[editing.tool === 'you' ? 0 : 1]);
+      s += `<circle class="edit-ring" cx="${x + CELL / 2}" cy="${y + CELL / 2}" r="4.6"/>`;
+    }
+    svg.innerHTML = s;
+  }
+
+  function statsHTML(d0, d1, walls) {
+    const row = (cls, who, d, w) => `<div class="stat"><span class="tok ${cls}" aria-hidden="true"></span><span class="who">${who}</span>
+      <span class="nums"><span>Path <b>${d < 0 ? '–' : d}</b></span><span>Walls <b>${w}</b></span></span></div>`;
+    return `<div class="stats">${row('you', 'You', d0, walls[0])}${row('them', 'Them', d1, walls[1])}</div>`;
+  }
+  function evalHTML(score) {
+    const WIN = E.WIN, MATE = E.MATE;
+    let v, label;
+    if (score > MATE) {
+      const n = Math.ceil((WIN - score) / 2);
+      v = 1; label = `<b>Winning line found.</b> You reach the goal in ${plural(n, 'move')} if you keep following the hints.`;
+    } else if (score < -MATE) {
+      v = -1; label = `<b>They have a winning line.</b> This move makes it as hard for them as possible.`;
+    } else {
+      v = Math.tanh(score / 48);
+      const steps = Math.round(Math.abs(score) / E.STEP * 2) / 2;
+      if (steps < 1) label = '<b>Roughly even.</b>';
+      else label = score > 0 ? `<b>You're ahead</b> by about ${plural(steps, 'move')}.` : `<b>They're ahead</b> by about ${plural(steps, 'move')}.`;
+    }
+    const w = Math.abs(v) * 50;
+    const fill = v >= 0
+      ? `<span class="meter-fill you" style="left:50%;width:${w.toFixed(1)}%"></span>`
+      : `<span class="meter-fill them" style="left:${(50 - w).toFixed(1)}%;width:${w.toFixed(1)}%"></span>`;
+    return `<div class="meter" role="img" aria-label="${label.replace(/<[^>]+>/g, '')}">${fill}<span class="meter-mid"></span></div><p class="meter-label">${label}</p>`;
+  }
+  function renderAdvice() {
+    const el = $('#advice');
+    el.hidden = !!editing;
+    if (editing) return;
+    const g = game, N = g.N, NN = NNof(g), w = E.winner(g);
+    const [d0, d1] = E.distances(g);
+    const moveNo = g.log.filter(e => e.p >= 0).length + 1;
+    let chip, head, body = '';
+    if (w >= 0) {
+      chip = '<span class="chip over">Game over</span>';
+      head = w === 0 ? 'You win' : 'They win';
+      body = `<p class="detail">${w === 0 ? 'Your pawn reached the top row.' : 'Their pawn reached the bottom row.'}</p>
+        <div class="adv-actions"><button class="btn solid" type="button" data-act="new">New game</button><button class="btn ghost" type="button" data-act="undo">Undo last move</button></div>`;
+    } else if (g.turn === 1) {
+      chip = '<span class="chip them">Their turn</span>';
+      head = 'Enter their move';
+      body = `<p class="detail">Tap the square their pawn moved to. If they placed a wall, switch to <b>Wall</b> under the board and tap where it went.</p>`;
+    } else {
+      chip = '<span class="chip you">Your turn</span>';
+      const sg = currentSugg();
+      if (!sg || sg.move < 0) {
+        head = 'Thinking…';
+        body = `<span class="think-bar" aria-hidden="true"></span><p class="detail">Looking ahead at both players' best moves.</p>`;
+      } else {
+        const m = sg.move, after = E.play(g, m), [a0, a1] = E.distances(after);
+        let detail;
+        if (m < NN) {
+          head = pawnHeadline(N, g.pos[0], m);
+          detail = a0 < d0 ? `Your path drops from <b>${d0}</b> to <b>${a0}</b> steps.`
+            : a0 === d0 ? `Your path stays at <b>${d0}</b> steps.`
+            : `Your path goes from <b>${d0}</b> to <b>${a0}</b> steps.`;
+        } else {
+          const k = m - NN;
+          head = `Place a ${wallParts(N, k).v ? 'vertical' : 'horizontal'} wall`;
+          detail = `Put it ${wallWhere(N, k)} (yellow on the board). Their path goes from <b>${d1}</b> to <b>${a1}</b> steps` +
+            (a0 !== d0 ? `; yours goes from <b>${d0}</b> to <b>${a0}</b>.` : `; yours stays at <b>${d0}</b>.`);
+        }
+        body = `<p class="detail">${detail}</p>${evalHTML(sg.score)}
+          <div class="adv-actions"><button class="btn hint" type="button" data-act="play">I played it</button><button class="btn ghost small" type="button" data-act="longer">Think longer</button></div>
+          <p class="meta">Looked ${plural(sg.depth, 'turn')} ahead · ${sg.nodes.toLocaleString()} positions · ${(sg.ms / 1000).toFixed(1)} s</p>
+          <p class="foot">Make this move in your game, then tap <b>I played it</b>. Played something else? Enter it on the board.</p>`;
+      }
+    }
+    el.innerHTML = `<div class="adv-top">${chip}<span class="turn-no">Move ${moveNo}</span></div>
+      <h2 class="headline">${head}</h2>${body}${statsHTML(d0, d1, g.walls)}`;
+  }
+  function renderControls() {
+    $('#controls').hidden = !!editing;
+    $('#modePawn').setAttribute('aria-pressed', String(mode === 'pawn'));
+    $('#modeWall').setAttribute('aria-pressed', String(mode === 'wall'));
+    $('#wallActions').hidden = editing || mode !== 'wall' || preview < 0;
+    $('#btnPlace').disabled = preview < 0 || E.wallStatus(game, preview) !== 'ok';
+    $('#btnUndo').disabled = history.length === 0;
+    $('#btnEdit').setAttribute('aria-pressed', String(!!editing));
+  }
+  function renderLog() {
+    const items = game.log;
+    if (!items.length) { $('#logBody').innerHTML = '<p class="empty">No moves yet. Moves you enter show up here.</p>'; return; }
+    let n = 0;
+    const lis = items.map(e => {
+      if (e.p < 0) return `<li><span class="tok edit" aria-hidden="true"></span>Position edited</li>`;
+      n++;
+      return `<li><span class="n">${n}.</span><span class="tok ${e.p === 0 ? 'you' : 'them'}" aria-label="${e.p === 0 ? 'You' : 'Them'}"></span>${e.t}</li>`;
+    }).join('');
+    const body = $('#logBody');
+    body.innerHTML = `<ol>${lis}</ol>`;
+    const ol = body.querySelector('ol'); ol.scrollTop = ol.scrollHeight;
+  }
+  function pressSeg(sel, attr, val) {
+    document.querySelectorAll(`${sel} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === String(val))));
+  }
+  function renderPanels() {
+    pressSeg('#segSize', 'size', setup.N);
+    pressSeg('#segFirst', 'first', setup.first);
+    pressSeg('#segThink', 'think', prefs.think);
+    const inp = $('#inpWalls'); if (document.activeElement !== inp) inp.value = setup.walls;
+    $('#editPanel').hidden = !editing;
+    if (editing) {
+      pressSeg('#segTool', 'tool', editing.tool);
+      pressSeg('#segNext', 'next', editing.draft.turn);
+      $('#outW0').textContent = editing.draft.walls[0];
+      $('#outW1').textContent = editing.draft.walls[1];
+    }
+  }
+  function renderAll() { renderBoard(); renderAdvice(); renderControls(); renderLog(); renderPanels(); }
+
+  // ---------- board input ----------
+  function onBoardClick(ev) {
+    const pt = svgPoint(ev);
+    if (editing) return editTap(pt);
+    const g = game, N = g.N;
+    if (E.winner(g) >= 0) { setMsg('The game is over. Undo a move or start a new game.'); return; }
+    if (mode === 'pawn') {
+      const cell = hitCell(N, pt.x, pt.y);
+      if (cell < 0) return;
+      const legal = E.legalPawnMoves(g);
+      if (legal.includes(cell)) return doMove(cell);
+      const who = g.turn === 0 ? 'Your' : 'Their';
+      if (cell === g.pos[g.turn]) setMsg(`${who} pawn can move to the squares marked with dots.`);
+      else if (cell === g.pos[1 - g.turn]) setMsg(`It's ${g.turn === 0 ? 'your' : 'their'} turn. Tap a square marked with a dot.`);
+      else setMsg(`${who} pawn can't reach ${sqName(N, cell)} this turn. If your game shows a different position, use Edit position to match it.`, true);
+    } else {
+      const k = hitWall(N, pt.x, pt.y);
+      if (k < 0) return;
+      if (k === preview) return placePreview();
+      preview = k;
+      describePreview(); renderBoard(); renderControls();
+    }
+  }
+  function editTap(pt) {
+    const d = editing.draft, N = d.N;
+    $('#editErr').textContent = '';
+    if (editing.tool === 'wall') {
+      const hit = wallAtPoint(d, pt.x, pt.y);
+      if (hit >= 0) setWallArr(d, hit, 0);
+      else {
+        const k = hitWall(N, pt.x, pt.y);
+        if (k < 0) return;
+        if (!E.wallFitsOnly(d, k)) { $('#editErr').textContent = 'That spot overlaps or crosses another wall.'; return; }
+        setWallArr(d, k, 1);
+      }
+    } else {
+      const cell = hitCell(N, pt.x, pt.y);
+      if (cell < 0) return;
+      const p = editing.tool === 'you' ? 0 : 1;
+      if (d.pos[1 - p] === cell) { $('#editErr').textContent = "Both pawns can't share a square."; return; }
+      d.pos[p] = cell;
+    }
+    renderBoard(); renderPanels();
+  }
+
+  // ---------- wiring ----------
+  function wire() {
+    const svg = $('#board');
+    svg.addEventListener('click', onBoardClick);
+    svg.addEventListener('keydown', (ev) => {
+      const t = ev.target.closest && ev.target.closest('.dest');
+      if (t && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); doMove(Number(t.dataset.cell)); }
+    });
+    $('#modePawn').addEventListener('click', () => { mode = 'pawn'; preview = -1; setMsg(''); renderBoard(); renderControls(); });
+    $('#modeWall').addEventListener('click', () => {
+      mode = 'wall'; preview = -1;
+      setMsg('Tap a groove between squares to place a wall there. Tap it again or press Place wall to confirm.');
+      renderBoard(); renderControls();
+    });
+    $('#btnRotate').addEventListener('click', () => {
+      if (preview < 0) return;
+      const M = Mof(game); preview = preview < M ? preview + M : preview - M;
+      describePreview(); renderBoard(); renderControls();
+    });
+    $('#btnPlace').addEventListener('click', placePreview);
+    $('#btnUndo').addEventListener('click', undoMove);
+    $('#advice').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-act]');
+      if (!b) return;
+      const act = b.dataset.act;
+      if (act === 'play') { const sg = currentSugg(); if (sg && sg.move >= 0) doMove(sg.move); }
+      else if (act === 'longer') { maybeThink(true, prefs.think * 3); renderAdvice(); renderBoard(); }
+      else if (act === 'new') openNew();
+      else if (act === 'undo') undoMove();
+    });
+
+    // new game panel
+    function openNew() { const p = $('#newPanel'); p.hidden = false; renderPanels(); p.querySelector('button[aria-pressed="true"], button').focus(); }
+    $('#btnNew').addEventListener('click', () => { const p = $('#newPanel'); if (p.hidden) openNew(); else p.hidden = true; });
+    $('#btnCloseNew').addEventListener('click', () => { $('#newPanel').hidden = true; });
+    $('#segSize').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-size]'); if (!b) return;
+      setup.N = Number(b.dataset.size); setup.walls = defaultWalls(setup.N); renderPanels();
+    });
+    $('#segFirst').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-first]'); if (!b) return;
+      setup.first = Number(b.dataset.first); renderPanels();
+    });
+    $('#newPanel').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-wstep]'); if (!b) return;
+      setup.walls = Math.max(0, Math.min(30, setup.walls + Number(b.dataset.wstep))); renderPanels();
+    });
+    $('#inpWalls').addEventListener('change', (ev) => {
+      const v = parseInt(ev.target.value, 10);
+      setup.walls = Number.isFinite(v) ? Math.max(0, Math.min(30, v)) : setup.walls; renderPanels();
+    });
+    $('#segThink').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-think]'); if (!b) return;
+      prefs.think = Number(b.dataset.think); save(); renderPanels();
+      setMsg(`Thinking time set to ${b.textContent.trim()}.`);
+    });
+    $('#btnStart').addEventListener('click', () => {
+      history.push(clone(game));
+      game = newGame(setup.N, setup.walls, setup.first);
+      $('#newPanel').hidden = true; mode = 'pawn'; preview = -1; editing = null;
+      setMsg(`New ${setup.N} × ${setup.N} game, ${plural(setup.walls, 'wall')} each.`);
+      save(); renderAll(); maybeThink();
+    });
+
+    // edit panel
+    $('#btnEdit').addEventListener('click', () => {
+      if (editing) return;
+      cancelSearch();
+      editing = { draft: clone(game), tool: 'you' };
+      $('#newPanel').hidden = true; $('#editErr').textContent = ''; setMsg('');
+      renderAll();
+      $('#segTool button').focus();
+    });
+    $('#segTool').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-tool]'); if (!b || !editing) return;
+      editing.tool = b.dataset.tool; renderBoard(); renderPanels();
+    });
+    $('#segNext').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-next]'); if (!b || !editing) return;
+      editing.draft.turn = Number(b.dataset.next); renderPanels();
+    });
+    $('#editPanel').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-ew]'); if (!b || !editing) return;
+      const p = Number(b.dataset.ew);
+      editing.draft.walls[p] = Math.max(0, Math.min(30, editing.draft.walls[p] + Number(b.dataset.d)));
+      renderPanels();
+    });
+    $('#btnClearWalls').addEventListener('click', () => {
+      if (!editing) return;
+      const d = editing.draft;
+      d.hW.fill(0); d.vW.fill(0); d.walls = [d.wallsInit, d.wallsInit];
+      renderBoard(); renderPanels();
+    });
+    $('#btnEditCancel').addEventListener('click', () => { editing = null; renderAll(); maybeThink(); });
+    $('#btnEditDone').addEventListener('click', () => {
+      const d = editing.draft, [d0, d1] = E.distances(d);
+      if (d.pos[0] === d.pos[1]) { $('#editErr').textContent = "Both pawns can't share a square."; return; }
+      if (d0 < 0 || d1 < 0) { $('#editErr').textContent = 'A pawn is walled off from its goal row. Remove a wall so both pawns can get through.'; return; }
+      history.push(clone(game));
+      d.log = game.log.concat([{ p: -1, t: 'edited' }]);
+      d.last = -1; d.lastFrom = -1; d.lastBy = -1;
+      game = d; editing = null; mode = 'pawn'; preview = -1;
+      setMsg('Position updated.');
+      save(); renderAll(); maybeThink();
+    });
+  }
+
+  // ---------- boot ----------
+  function start(data) {
+    let saved = data && data.game ? data : null;
+    if (!saved) { try { saved = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { saved = null; } }
+    if (saved && validGame(saved.game)) {
+      game = saved.game;
+      history = Array.isArray(saved.history) ? saved.history.filter(validGame) : [];
+      if (saved.prefs && [500, 1500, 4000, 8000].includes(saved.prefs.think)) prefs = saved.prefs;
+      if (saved.setup && SIZES.includes(saved.setup.N)) setup = saved.setup;
+    } else {
+      game = newGame(9, 10, 0);
+    }
+    if (!('lastBy' in game)) game.lastBy = -1;
+    wire();
+    renderAll();
+    maybeThink();
+  }
+  try { window.claude && window.claude.hot && window.claude.hot.snapshot && window.claude.hot.snapshot(() => ({ game, history: history.slice(-150), prefs, setup })); } catch (e) { /* no viewer hooks */ }
+  const hot = window.claude && window.claude.hot;
+  if (hot && hot.ready) hot.ready(start); else start((hot && hot.data) || {});
+})();
+</script>
+
+</body>
+</html>
